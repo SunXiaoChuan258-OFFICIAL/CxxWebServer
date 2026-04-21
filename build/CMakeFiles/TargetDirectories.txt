@@ -1,0 +1,3 @@
+/home/mercury/my_projects/thread_pool/build/CMakeFiles/thread_pool_server.exe.dir
+/home/mercury/my_projects/thread_pool/build/CMakeFiles/edit_cache.dir
+/home/mercury/my_projects/thread_pool/build/CMakeFiles/rebuild_cache.dir
