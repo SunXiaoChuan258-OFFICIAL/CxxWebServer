@@ -13,8 +13,6 @@ constexpr const char* error_500_form="There is an unusual problem serving the re
 constexpr const char* doc_root="/var/www/html";
 
 
-
-
 //以下为常规操作:1.setnonblock 2.addfd 3.removefd 4.modfd
 
 
@@ -680,7 +678,12 @@ void Http_Conn::process(){//用户逻辑函数，由线程调用，必须实现
     }
 
     // printf("ready to sent\n");
-    modfd(m_epollfd,m_sockfd,EPOLLOUT);//完成装载等待发送和注册写事件
+    modfd(m_epollfd,m_sockfd,EPOLLOUT);//完成装载等待发送和注册写事件 
+  
+    //现已改为直接发送,不再等待主线程写
+           
+  
+
 
 
 

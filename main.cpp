@@ -16,6 +16,7 @@
 #include "lock.h"
 #include "thread_pool.h"
 #include "http_conn.h"
+#include "timer_heap.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
@@ -51,6 +52,8 @@ void show_error(int connfd,const char* info){//向对端报错，并关闭连接
 }
 
 
+
+
 int main(int argc,char* argv[]){
     if(argc<=2){
         printf("usage: %s ipaddress portnumber\n",basename(argv[0]));
@@ -77,8 +80,8 @@ int main(int argc,char* argv[]){
 
 
     printf("thread_pool_built!\n");
-    std::vector<Http_Conn> users(MAX_FD);//以空间换时间，为每个可能的connfd准备一个Http_Conn
-    int user_count=0;//记录用户数量，与m_user_count不同
+    std::vector<Http_Conn> users(MAX_FD);//以空间换时间，为每个可能的connfd准备一个Http_Conn,
+    //int user_count=0;//记录用户数量，与m_user_count不同,这里不启用
 
     
     
@@ -101,7 +104,7 @@ int main(int argc,char* argv[]){
     ret=bind(listenfd,(struct sockaddr*)&address,sizeof(address));
     assert(ret!=-1);
 
-    ret=listen(listenfd,1024);
+    ret=listen(listenfd,1024);//backlog要足够大
     assert(ret>=0);
 
 
@@ -116,8 +119,17 @@ int main(int argc,char* argv[]){
 
     Http_Conn::m_epollfd=epollfd;//任务类与主线程共享epollfd
 
+    // 不活跃连接超时秒数
+    constexpr int CONN_TIMEOUT_S = 60;
+    TimerHeap timer_heap;
+    // 连接代数计数器：防止fd复用后旧定时器误关新连接
+    std::vector<uint64_t> conn_gen(MAX_FD);
+
     while(true){
-        int number=epoll_wait(epollfd,events.data(),MAX_EVENT_NUMBER,-1);
+        //epollwait轮询前处理到期定时器，并用最近到期时间作为epoll_wait超时,防止长时间等待
+        timer_heap.tick();
+        int timeout_ms = timer_heap.next_timeout_ms();
+        int number=epoll_wait(epollfd,events.data(),MAX_EVENT_NUMBER,timeout_ms);
         if(number<0 && errno!=EINTR){
             printf("epoll failure\n");
         }
@@ -129,20 +141,30 @@ int main(int argc,char* argv[]){
                 struct sockaddr_in client_addr;
                 socklen_t client_addr_len=sizeof(client_addr);
 
-                int connfd=accept(listenfd,(struct sockaddr*)&client_addr,&client_addr_len);
-                if(connfd<0){
-                    printf("errno is %d\n",errno);
-                    continue;
+                //ET模式必须循环accept直到EAGAIN
+                while(true){
+                    client_addr_len=sizeof(client_addr);
+                    int connfd=accept(listenfd,(struct sockaddr*)&client_addr,&client_addr_len);
+                    if(connfd<0){
+                        if(errno==EAGAIN || errno==EWOULDBLOCK) break;
+                        printf("errno is %d\n",errno);
+                        break;
+                    }
+
+                    if(Http_Conn::m_user_count>=MAX_FD){
+                        show_error(connfd,"sry,server too busy,please try again\n");
+                        continue;
+                    }
+
+                    users[connfd].init(connfd,client_addr);
+                    // 为新连接注册超时定时器,捕获代数防止fd复用误关
+                    uint64_t gen = ++conn_gen[connfd];
+                    timer_heap.add_timer(connfd,
+                        std::chrono::steady_clock::now() + std::chrono::seconds(CONN_TIMEOUT_S),
+                        [&users, &conn_gen, connfd, gen]() {
+                            if (conn_gen[connfd] == gen) users[connfd].close_conn();
+                        });
                 }
-
-                if(Http_Conn::m_user_count>=MAX_FD){//服务器繁忙
-                    show_error(connfd,"sry,server too busy,please try again\n");//向对端报错，并关闭连接
-                    continue;
-                }
-
-
-                // printf("a new user joined\n");
-                users[connfd].init(connfd,client_addr);//客户连接初始化
 
 
 
@@ -153,21 +175,27 @@ int main(int argc,char* argv[]){
 
             else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)){
                 // printf("a user left\n");
+                timer_heap.del_timer(sockfd);
                 users[sockfd].close_conn();
             }
 
 
             else if(events[i].events & EPOLLIN){
+                // 有活动，刷新超时
+                timer_heap.adjust_timer(sockfd,
+                    std::chrono::steady_clock::now() + std::chrono::seconds(CONN_TIMEOUT_S));
                 if(users[sockfd].read()){//如果能正常把内核缓冲区读空
                     if(!pool->append(dynamic_cast<Http_Conn*>((&users[sockfd])))){//就把连接加入到请求队列中,如果队列已满，直接关闭连接
+                        timer_heap.del_timer(sockfd);
                         users[sockfd].close_conn();
-                  
-                        
+
+
                     }
 
                 }
 
                 else {//否则关闭连接
+                    timer_heap.del_timer(sockfd);
                     users[sockfd].close_conn();
                 }
 
@@ -175,7 +203,13 @@ int main(int argc,char* argv[]){
 
 
             else if(events[i].events & EPOLLOUT){
-                if(!users[sockfd].write()) users[sockfd].close_conn();
+                // 有活动，刷新超时
+                timer_heap.adjust_timer(sockfd,
+                    std::chrono::steady_clock::now() + std::chrono::seconds(CONN_TIMEOUT_S));
+                if(!users[sockfd].write()){
+                    timer_heap.del_timer(sockfd);
+                    users[sockfd].close_conn();
+                }
                 // printf("echo sent successfully\n");
 
             }

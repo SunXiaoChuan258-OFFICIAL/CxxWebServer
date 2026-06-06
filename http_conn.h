@@ -20,6 +20,9 @@
 #include <sys/uio.h>
 #include "lock.h"
 
+
+
+
 class Http_Conn{
 public:
     static constexpr int FILENAME_LEN=200;   //最大文件名长度
@@ -138,3 +141,4 @@ private:
 
 
 };
+

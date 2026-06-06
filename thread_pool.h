@@ -123,7 +123,7 @@ void threadpool<T>::run(){
     while(!m_stop){
         m_queuestat.wait();//P操作，获取资源
         
-        size_t cur_head=m_head.fetch_add(1,std::memory_order_acq_rel)%m_queue_size;//获取队头,fetch_add相当于原子化pop
+        size_t cur_head=(m_head.fetch_add(1,std::memory_order_acq_rel))%m_queue_size;//获取队头,fetch_add相当于原子化pop
         size_t cur_tail=m_tail.load(std::memory_order_acquire);
         
         if(cur_head==cur_tail){//队列为空，退出继续尝试获取资源,理论上信号量确保了不会为空
@@ -140,7 +140,8 @@ void threadpool<T>::run(){
 
 
         request->process();//request封装了用户业务逻辑，必须实现process处理函数
-
+        
+     
 
 
 
