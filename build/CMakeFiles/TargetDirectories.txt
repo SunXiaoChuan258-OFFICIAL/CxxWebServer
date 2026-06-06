@@ -1,3 +1,0 @@
-/home/mercury/my_projects/CxxWebServer_release/build/CMakeFiles/CxxWebServer_release.exe.dir
-/home/mercury/my_projects/CxxWebServer_release/build/CMakeFiles/edit_cache.dir
-/home/mercury/my_projects/CxxWebServer_release/build/CMakeFiles/rebuild_cache.dir
